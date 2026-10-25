@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Opal Collection</title>
+<style>
+  :root { --coal:#0a0908; --iron:#1a1612; --rust:#8c4a2f; --bone:#ede7dd; --dust:#c4b8a5; --copper:#c25e22; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--coal); color:var(--bone); font-family:system-ui,-apple-system,sans-serif; height:100dvh; overflow:hidden; }
+  #app { height:100%; display:flex; flex-direction:column; }
+  .screen { flex:1; display:none; flex-direction:column; min-height:0; }
+  .screen.active { display:flex; }
+  header { padding:16px 20px; border-bottom:1px solid #3d342c; display:flex; justify-content:space-between; align-items:center; }
+  header h1 { font-size:18px; font-weight:600; }
+  header button { background:none; border:none; color:var(--dust); font-size:14px; }
+  .camera-wrap { flex:1; position:relative; background:#000; min-height:0; }
+  video { width:100%; height:100%; object-fit:cover; }
+  .overlay { position:absolute; bottom:0; left:0; right:0; padding:20px 20px calc(20px + env(safe-area-inset-bottom)); background:linear-gradient(transparent, rgba(10,9,8,.94)); }
+  .pass { color:var(--copper); font-size:11px; letter-spacing:2px; margin-bottom:4px; }
+  .step-label { font-size:20px; font-weight:600; }
+  .instruction { color:var(--dust); font-size:14px; margin:6px 0 14px; }
+  .progress { display:flex; gap:6px; margin-bottom:16px; }
+  .dot { width:8px; height:8px; border-radius:50%; background:#3d342c; }
+  .dot.active { background:var(--bone); }
+  .dot.done { background:var(--rust); }
+  .btn { background:var(--bone); color:var(--coal); border:none; padding:16px; width:100%; font-weight:700; letter-spacing:.4px; font-size:15px; }
+  .btn-secondary { background:none; color:var(--dust); border:none; padding:12px; width:100%; margin-top:8px; }
+  .content { flex:1; overflow-y:auto; padding:20px; }
+  .thumb-row { display:flex; align-items:center; gap:12px; margin-bottom:14px; }
+  .thumb { width:64px; height:64px; background:var(--iron); object-fit:cover; }
+  .meta { color:var(--dust); font-size:14px; margin-bottom:20px; }
+  .status { text-align:center; padding:40px 20px; color:var(--dust); }
+  .error { color:#e0873a; padding:20px; text-align:center; line-height:1.5; }
+  .hidden { display:none !important; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="capture" class="screen active">
+    <header><h1>Opal Collection</h1></header>
+    <div class="camera-wrap">
+      <video id="video" autoplay playsinline muted></video>
+      <div id="cameraError" class="error hidden"></div>
+      <div class="overlay">
+        <div class="pass" id="passLabel">PASS A — APPEARANCE</div>
+        <div class="step-label" id="stepLabel">Front surface</div>
+        <div class="instruction" id="instruction">Hold steady. Diffuse light. Fill the frame.</div>
+        <div class="progress" id="progress"></div>
+        <button class="btn" id="captureBtn">CAPTURE</button>
+      </div>
+    </div>
+  </div>
+  <div id="review" class="screen">
+    <header><h1>Review</h1><button id="back">Edit</button></header>
+    <div class="content" id="reviewContent"></div>
+    <div style="padding:16px;"><button class="btn" id="toProcess">Create digital twin</button></div>
+  </div>
+  <div id="process" class="screen">
+    <header><h1>Create twin</h1></header>
+    <div class="status" id="processStatus">
+      <p>Base mesh (flash suppressed) plus colour package for SOLARIUM.</p>
+      <button class="btn" id="startProcess" style="margin-top:24px;">Start reconstruction</button>
+    </div>
+  </div>
+</div>
+<script>
+const STEPS = [
+  { id:"front", pass:"appearance", label:"Front surface", instruction:"Hold steady. Diffuse light. Fill the frame." },
+  { id:"reverse", pass:"appearance", label:"Reverse surface", instruction:"Flip the stone. Same lighting." },
+  { id:"side_1", pass:"appearance", label:"Side profile 1", instruction:"Rotate about 90 degrees. Keep the whole stone in frame." },
+  { id:"side_2", pass:"appearance", label:"Side profile 2", instruction:"Rotate another 90 degrees." },
+  { id:"poc", pass:"colour", label:"Colour flash", instruction:"Slowly rotate under a single point light." }
+];
+let stepIndex = 0;
+const assets = [];
+const video = document.getElementById("video");
+const canvas = document.createElement("canvas");
+function show(id) {
+  document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));
+  document.getElementById(id).classList.add("active");
+}
+function updateStep() {
+  const s = STEPS[stepIndex];
+  document.getElementById("passLabel").textContent = s.pass === "appearance" ? "PASS A — APPEARANCE" : "PASS B — COLOUR FLASH";
+  document.getElementById("stepLabel").textContent = s.label;
+  document.getElementById("instruction").textContent = s.instruction;
+  document.getElementById("progress").innerHTML = STEPS.map((st, i) => {
+    const done = assets.some((a) => a.stepId === st.id);
+    return '<div class="dot' + (done ? " done" : "") + (i === stepIndex ? " active" : "") + '"></div>';
+  }).join("");
+}
+async function startCamera() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+    video.srcObject = stream;
+  } catch (e) {
+    const el = document.getElementById("cameraError");
+    el.textContent = "Allow camera access, then refresh. On iPhone this must be opened in Safari over HTTPS.";
+    el.classList.remove("hidden");
+  }
+}
+document.getElementById("captureBtn").onclick = () => {
+  const s = STEPS[stepIndex];
+  canvas.width = video.videoWidth || 640;
+  canvas.height = video.videoHeight || 480;
+  canvas.getContext("2d").drawImage(video, 0, 0);
+  assets.push({ stepId: s.id, uri: canvas.toDataURL("image/jpeg", 0.85), timestamp: Date.now() });
+  if (stepIndex < STEPS.length - 1) { stepIndex += 1; updateStep(); }
+  else showReview();
+};
+function showReview() {
+  document.getElementById("reviewContent").innerHTML =
+    '<div class="meta">' + assets.length + " assets · ready</div>" +
+    assets.map((a) => '<div class="thumb-row"><img class="thumb" src="' + a.uri + '" alt=""><div><div>' + a.stepId + '</div><div style="color:#c4b8a5;font-size:13px">' + new Date(a.timestamp).toLocaleTimeString() + "</div></div></div>").join("");
+  show("review");
+}
+document.getElementById("back").onclick = () => { stepIndex = 0; assets.length = 0; updateStep(); show("capture"); };
+document.getElementById("toProcess").onclick = () => show("process");
+document.getElementById("startProcess").onclick = async () => {
+  const el = document.getElementById("processStatus");
+  el.innerHTML = "<p>Uploading capture…</p>";
+  await new Promise((r) => setTimeout(r, 700));
+  el.innerHTML = "<p>Building mesh…</p>";
+  await new Promise((r) => setTimeout(r, 1100));
+  el.innerHTML = "<p>Twin " + Date.now().toString().slice(-6) + " ready.</p><p style=\"margin-top:8px\">COLMAP reconstruction is the next job. This step is a placeholder.</p>";
+};
+startCamera();
+updateStep();
+</script>
+</body>
+</html>
